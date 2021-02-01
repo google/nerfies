@@ -58,9 +58,12 @@ training job to run without having to stop for evaluation.
  * We provide a couple preset configurations.
  * Please refer to `config.py` for documentation on what each configuration does.
  * Preset configs:
-    - `gpu_vrig_short.gin`: This is the configuration we used to generate the table in the paper. It requires 8 GPUs for training.
-    - `test_vrig.gin`: This is a test configuration to see if the code runs. It probably will not result in a good looking result.
-    - `gpu_f2.gin`: This is a high-resolution model and will take around 3 days to train.
+    - `gpu_vrig_paper.gin`: This is the configuration we used to generate the table in the paper. It requires 8 GPUs for training.
+    - `gpu_fullhd.gin`: This is a high-resolution model and will take around 3 days to train on 8 GPUs.
+    - `gpu_quarterhd.gin`: This is a low-resolution model and will take around 14 hours to train on 8 GPUs.
+    - `test_local.gin`: This is a test configuration to see if the code runs. It probably will not result in a good looking result.
+    - `test_vrig.gin`: This is a test configuration to see if the code runs for validation rig captures. It probably will not result in a good looking result.
+ * Training on fewer GPUs will require tuning of the batch size and learning rates. We've provided an example configuration for 4 GPUs in `gpu_quarterhd_4gpu.gin` but we have not tested it, so please only use it as a reference.
 
 ## Datasets
 A dataset is a directory with the following structure:
@@ -91,7 +94,7 @@ it is some alphanumeric string such as `000054`.
  * We use a camera model identical to the [OpenCV camera model](https://docs.opencv.org/master/dc/dbb/tutorial_py_calibration.html), which is also supported by COLMAP.
  * Each camera is a serialized version of the `Camera` class defined in `camera.py` and looks like this:
 
-```json
+```javascript
 {
   // A 3x3 world-to-camera rotation matrix representing the camera orientation.
   "orientation": [
@@ -133,7 +136,7 @@ it is some alphanumeric string such as `000054`.
  * This defines the 'metadata' IDs used for embedding lookups.
  * Contains a dictionary of the following format:
 
-```json
+```javascript
 {
     "${item_id}": {
         // The embedding ID used to fetch the deformation latent code
@@ -155,7 +158,7 @@ it is some alphanumeric string such as `000054`.
  * Contains information about how we will parse the scene.
  * See comments inline.
  
-```json
+```javascript
 {
   // The scale factor we will apply to the pointcloud and cameras. This is
   // important since it controls what scale is used when computing the positional
@@ -179,7 +182,7 @@ it is some alphanumeric string such as `000054`.
  * Defines the training/validation split of the dataset.
  * See inline comments:
  
-```json
+```javascript
 {
   // The total number of images in the dataset.
   "count": 114,
@@ -192,6 +195,7 @@ it is some alphanumeric string such as `000054`.
   // A list containing all validation item IDs in the dataset.
   // This should be mutually exclusive with `train_ids`.
   "val_ids": [...],
+}
 ```
 
 ### `points.npy`
@@ -203,7 +207,13 @@ it is some alphanumeric string such as `000054`.
 If you find our work useful, please consider citing:
 ```BibTeX
 @article{park2020nerfies
-  author    = {Park, Keunhong and Sinha, Utkarsh and Barron, Jonathan T. and Bouaziz, Sofien and Goldman, Dan B and Seitz, Steven M. and Martin-Brualla, Ricardo},
+  author    = {Park, Keunhong 
+               and Sinha, Utkarsh 
+               and Barron, Jonathan T. 
+               and Bouaziz, Sofien 
+               and Goldman, Dan B 
+               and Seitz, Steven M. 
+               and Martin-Brualla, Ricardo},
   title     = {Deformable Neural Radiance Fields},
   journal   = {arXiv preprint arXiv:2011.12948},
   year      = {2020},

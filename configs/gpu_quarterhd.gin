@@ -1,0 +1,43 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# This is a quarter HD configuration.
+# The image scale is based on our input video size of 1920x1080.
+# This configuration requires 8 GPUs to train.
+#
+# To make this runnable on fewer GPUs, decrease the `batch_size` and scale the
+# learning rate by the sqrt of the factor by which you decreased it. Expect
+# the results to look slightly worse without tuning.
+
+include 'warp_defaults.gin'
+
+max_steps = 250000
+lr_decay_steps = 500000
+
+image_scale = 4
+batch_size = 6144
+eval_batch_size = 8096
+init_lr = 0.001
+final_lr = 0.0001
+
+ModelConfig.num_nerf_point_freqs = 8
+ModelConfig.nerf_trunk_width = 256
+ModelConfig.nerf_trunk_depth = 8
+ModelConfig.num_coarse_samples = 128
+ModelConfig.num_fine_samples = 128
+
+TrainConfig.print_every = 200
+TrainConfig.log_every = 500
+TrainConfig.save_every = 5000

@@ -1,0 +1,51 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# This is a test configuration for sanity checking.
+# It will likely not result in a good quality reconstruction.
+# This config will run on a single GPU.
+
+include 'defaults.gin'
+
+max_steps = 250000
+
+image_scale = 8
+batch_size = 1024
+eval_batch_size = 1024
+init_lr = 0.001
+final_lr = 0.0001
+lr_decay_steps = 500000
+elastic_init_weight = 0.001
+
+ModelConfig.num_nerf_point_freqs = 8
+ModelConfig.nerf_trunk_width = 128
+ModelConfig.nerf_trunk_depth = 8
+ModelConfig.num_coarse_samples = 64
+ModelConfig.num_fine_samples = 64
+ModelConfig.use_appearance_metadata = False
+ModelConfig.use_camera_metadata = True
+ModelConfig.use_stratified_sampling = False
+ModelConfig.camera_metadata_dims = 2
+ModelConfig.use_warp = True
+
+TrainConfig.use_elastic_loss = True
+TrainConfig.use_background_loss = True
+TrainConfig.print_every = 1
+TrainConfig.log_every = 100
+TrainConfig.save_every = 1000
+
+EvalConfig.chunk = 8192
+EvalConfig.num_val_eval = None
+EvalConfig.num_train_eval = None

@@ -1,0 +1,67 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# This is a test configuration for sanity checking.
+# It will likely not result in a good quality reconstruction.
+# This config will run on a single GPU.
+
+elastic_init_weight = 0.01
+max_steps = 250000
+
+ExperimentConfig.image_scale = 4
+
+ModelConfig.num_coarse_samples = 64
+ModelConfig.num_fine_samples = 64
+ModelConfig.use_viewdirs = True
+ModelConfig.use_stratified_sampling = True
+ModelConfig.use_appearance_metadata = True
+ModelConfig.use_warp = True
+ModelConfig.warp_field_type = 'se3'
+ModelConfig.num_warp_features = 3
+ModelConfig.num_warp_freqs = 8
+ModelConfig.sigma_activation = @nn.softplus
+
+TrainConfig.max_steps = 200000
+TrainConfig.lr_schedule = {
+  'type': 'exponential',
+  'initial_value': 0.001,
+  'final_value': 0.0001,
+  'num_steps': %max_steps,
+}
+TrainConfig.batch_size = 1024
+TrainConfig.warp_alpha_schedule = {
+  'type': 'linear',
+  'initial_value': 0.0,
+  'final_value': 8.0,
+  'num_steps': 80000,
+}
+TrainConfig.use_elastic_loss = True
+TrainConfig.elastic_loss_weight_schedule = {
+  'type': 'piecewise',
+  'schedules': [
+    (50000, ('constant', %elastic_init_weight)),
+    (100000, ('cosine_easing', %elastic_init_weight, 1e-8, 100000)),
+  ]
+}
+TrainConfig.use_background_loss = False
+TrainConfig.background_loss_weight = 1.0
+
+TrainConfig.print_every = 10
+TrainConfig.log_every = 100
+TrainConfig.save_every = 1000
+
+EvalConfig.eval_once = False
+EvalConfig.save_output = True
+EvalConfig.chunk = 8192
