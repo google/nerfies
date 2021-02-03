@@ -6,10 +6,27 @@ This is the code for Deformable Neural Radiance Fields, a.k.a. Nerfies.
  * [Paper](https://storage.googleapis.com/nerfies-public/videos/nerfies_paper.pdf)
  * [Video](https://www.youtube.com/watch?v=MrKrnHhk8IA)
  
- This codebase contains a re-implementation of Nerfies using [JAX](https://github.com/google/jax),
- building on [JaxNeRF](https://github.com/google-research/google-research/tree/master/jaxnerf).
- We have been careful to match implementation details and have reproduced the original
- results presented in the paper.
+This codebase contains a re-implementation of Nerfies using [JAX](https://github.com/google/jax),
+building on [JaxNeRF](https://github.com/google-research/google-research/tree/master/jaxnerf).
+We have been careful to match implementation details and have reproduced the original
+results presented in the paper.
+
+## Demo
+
+We provide an easy-to-get-started demo using Google Colab!
+
+These Colabs will allow you to train a basic version of our method using 
+Cloud TPUs (or GPUs) on Google Colab. 
+
+Note that due to limited compute resources available, these are not the fully 
+featured models. If you would like to train a fully featured Nerfie, please 
+refer to the instructions below on how to train on your own machine.
+
+| Description      | Link |
+| ----------- | ----------- |
+| Process a video into a Nerfie dataset| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/nerfies/blob/main/notebooks/Nerfies_Capture_Processing.ipynb)|
+| Train a Nerfie| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/nerfies/blob/main/notebooks/Nerfies_Training.ipynb)|
+| Render a Nerfie video| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/nerfies/blob/main/notebooks/Nerfies_Render_Video.ipynb)|
  
 ## Setup
 The code can be run under any environment with Python 3.7 and above.
