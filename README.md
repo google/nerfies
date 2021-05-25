@@ -3,7 +3,7 @@
 This is the code for Deformable Neural Radiance Fields, a.k.a. Nerfies.
 
  * [Project Page](https://nerfies.github.io)
- * [Paper](https://storage.googleapis.com/nerfies-public/videos/nerfies_paper.pdf)
+ * [Paper](https://arxiv.org/abs/2011.12948)
  * [Video](https://www.youtube.com/watch?v=MrKrnHhk8IA)
  
 This codebase contains a re-implementation of Nerfies using [JAX](https://github.com/google/jax),
