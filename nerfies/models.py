@@ -19,6 +19,7 @@ from flax import linen as nn
 import frozendict
 from jax import random
 import jax.numpy as jnp
+from dataclasses import field
 
 from nerfies import configs
 from nerfies import glo
@@ -106,7 +107,7 @@ class NerfModel(nn.Module):
   use_warp: bool = False
   use_warp_jacobian: bool = False
   use_weights: bool = False
-  warp_kwargs: Mapping[str, Any] = frozendict.frozendict()
+  warp_kwargs: Mapping[str, Any] = field(default_factory=frozendict.frozendict)
 
   metadata_encoded: bool = False
 

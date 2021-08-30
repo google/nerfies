@@ -20,6 +20,7 @@ import dataclasses
 from flax import nn
 import frozendict
 import gin
+from dataclasses import field
 
 from nerfies import types
 
@@ -99,7 +100,7 @@ class ModelConfig:
   # The type of warp field to use. One of: 'translation', or 'se3'.
   warp_field_type: str = 'translation'
   # Additional keyword arguments to pass to the warp field.
-  warp_kwargs: Mapping[str, Any] = frozendict.frozendict()
+  warp_kwargs: Mapping[str, Any] = field(default_factory=frozendict.frozendict)
 
 
 @gin.configurable()
@@ -126,7 +127,7 @@ class TrainConfig:
   batch_size: int = gin.REQUIRED
 
   # The definition for the learning rate schedule.
-  lr_schedule: ScheduleDef = frozendict.frozendict({
+  lr_schedule: ScheduleDef = field(default_factory=lambda : {
       'type': 'exponential',
       'initial_value': 0.001,
       'final_value': 0.0001,
@@ -136,7 +137,7 @@ class TrainConfig:
   max_steps: int = 1000000
 
   # The start value of the warp alpha.
-  warp_alpha_schedule: ScheduleDef = frozendict.frozendict({
+  warp_alpha_schedule: ScheduleDef = field(default_factory=lambda : {
       'type': 'linear',
       'initial_value': 0.0,
       'final_value': 8.0,
