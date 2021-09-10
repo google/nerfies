@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Casual Volumetric Capture datasets.
-
-Note: Please benchmark before submitted changes to this module. It's very easy
-to introduce data loading bottlenecks!
-"""
+"""Casual Volumetric Capture datasets."""
 import json
 from typing import List, Tuple
 
@@ -94,17 +90,17 @@ class NerfiesDataSource(core.DataSource):
       test_camera_trajectory='orbit-extreme',
       **kwargs):
     self.data_dir = gpath.GPath(data_dir)
-    super().__init__(**kwargs)
+    # Load IDs from JSON if it exists. This is useful since COLMAP fails on
+    # some images so this gives us the ability to skip invalid images.
+    train_ids, val_ids = _load_dataset_ids(self.data_dir)
+    super().__init__(train_ids=train_ids, val_ids=val_ids,
+                     **kwargs)
     self.scene_center, self.scene_scale, self._near, self._far = \
       load_scene_info(self.data_dir)
     self.test_camera_trajectory = test_camera_trajectory
 
     self.image_scale = image_scale
     self.shuffle_pixels = shuffle_pixels
-
-    # Load IDs from JSON if it exists. This is useful since COLMAP fails on
-    # some images so this gives us the ability to skip invalid images.
-    self._train_ids, self._val_ids = _load_dataset_ids(self.data_dir)
 
     self.rgb_dir = gpath.GPath(data_dir, 'rgb', f'{image_scale}x')
     self.depth_dir = gpath.GPath(data_dir, 'depth', f'{image_scale}x')
@@ -131,14 +127,6 @@ class NerfiesDataSource(core.DataSource):
       return '.json'
 
     raise ValueError(f'Unknown camera_type {self.camera_type}')
-
-  @property
-  def train_ids(self):
-    return self._train_ids
-
-  @property
-  def val_ids(self):
-    return self._val_ids
 
   def get_rgb_path(self, item_id):
     return self.rgb_dir / f'{item_id}.png'
@@ -176,11 +164,17 @@ class NerfiesDataSource(core.DataSource):
     cameras = utils.parallel_map(self.load_camera, camera_paths)
     return cameras
 
-  def load_points(self):
+  def load_points(self, shuffle=False):
     with (self.data_dir / 'points.npy').open('rb') as f:
       points = np.load(f)
     points = (points - self.scene_center) * self.scene_scale
-    return points.astype(np.float32)
+    points = points.astype(np.float32)
+    if shuffle:
+      logging.info('Shuffling points.')
+      shuffled_inds = self.rng.permutation(len(points))
+      points = points[shuffled_inds]
+    logging.info('Loaded %d points.', len(points))
+    return points
 
   def get_appearance_id(self, item_id):
     return self.metadata_dict[item_id]['appearance_id']
@@ -190,3 +184,10 @@ class NerfiesDataSource(core.DataSource):
 
   def get_warp_id(self, item_id):
     return self.metadata_dict[item_id]['warp_id']
+
+  def get_time_id(self, item_id):
+    if 'time_id' in self.metadata_dict[item_id]:
+      return self.metadata_dict[item_id]['time_id']
+    else:
+      # Fallback for older datasets.
+      return self.metadata_dict[item_id]['warp_id']

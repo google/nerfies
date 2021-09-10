@@ -26,6 +26,11 @@ import jax.numpy as jnp
 class TrainState:
   optimizer: optim.Optimizer
   warp_alpha: jnp.ndarray = 0.0
+  time_alpha: jnp.ndarray = 0.0
+
+  @property
+  def warp_extra(self):
+    return {'alpha': self.warp_alpha, 'time_alpha': self.time_alpha}
 
 
 def sample_along_rays(key, origins, directions, num_coarse_samples, near, far,
@@ -68,32 +73,33 @@ def sample_along_rays(key, origins, directions, num_coarse_samples, near, far,
                    z_vals[..., :, None] * directions[..., None, :]))
 
 
-def volumetric_rendering(raw,
+def volumetric_rendering(rgb,
+                         sigma,
                          z_vals,
                          dirs,
                          use_white_background,
-                         sigma_activation=nn.relu,
                          sample_at_infinity=True,
+                         return_weights=False,
                          eps=1e-10):
   """Volumetric Rendering Function.
 
   Args:
-    raw: jnp.ndarray(float32), [batch_size, num_coarse_samples, 4].
-    z_vals: jnp.ndarray(float32), [batch_size, num_coarse_samples].
-    dirs: jnp.ndarray(float32), [batch_size, 3].
-    use_white_background: bool.
-    sigma_activation: the activation functions to apply to the sigma values.
+    rgb: an array of size (B,S,3) containing the RGB color values.
+    sigma: an array of size (B,S,1) containing the densities.
+    z_vals: an array of size (B,S) containing the z-coordinate of the samples.
+    dirs: an array of size (B,3) containing the directions of rays.
+    use_white_background: whether to assume a white background or not.
     sample_at_infinity: if True adds a sample at infinity.
+    return_weights: if True returns the weights in the dictionary.
     eps: a small number to prevent numerical issues.
 
   Returns:
-    rgb: jnp.ndarray(float32), [batch_size, 3].
-    depth: jnp.ndarray(float32), [batch_size].
-    acc: jnp.ndarray(float32), [batch_size].
-    weights: jnp.ndarray(float32), [batch_size, num_coarse_samples]
+    A dictionary containing:
+      rgb: an array of size (B,3) containing the rendered colors.
+      depth: an array of size (B,) containing the rendered depth.
+      acc: an array of size (B,) containing the accumulated density.
+      weights: an array of size (B,S) containing the weight of each sample.
   """
-  rgb = nn.sigmoid(raw['rgb'])
-  sigma = sigma_activation(jnp.squeeze(raw['alpha'], axis=-1))
   # TODO(keunhong): remove this hack.
   last_sample_z = 1e10 if sample_at_infinity else 1e-19
   dists = jnp.concatenate([
@@ -102,11 +108,11 @@ def volumetric_rendering(raw,
   ], -1)
   dists = dists * jnp.linalg.norm(dirs[..., None, :], axis=-1)
   alpha = 1.0 - jnp.exp(-sigma * dists)
+  # Prepend a 1.0 to make this an 'exclusive' cumprod as in `tf.math.cumprod`.
   accum_prod = jnp.concatenate([
-      jnp.full_like(alpha[..., :1], 1., alpha.dtype),
-      jnp.cumprod(1.0 - alpha[..., :-1] + eps, axis=-1)
-  ],
-                               axis=-1)
+      jnp.ones_like(alpha[..., :1], alpha.dtype),
+      jnp.cumprod(1.0 - alpha[..., :-1] + eps, axis=-1),
+  ], axis=-1)
   weights = alpha * accum_prod
 
   rgb = (weights[..., None] * rgb).sum(axis=-2)
@@ -116,14 +122,18 @@ def volumetric_rendering(raw,
   if use_white_background:
     rgb = rgb + (1. - acc[..., None])
 
-  inv_eps = 1.0 / eps
-  disp = 1.0 / exp_depth
-  disp = jnp.where((disp > 0) & (disp < inv_eps) & (acc > eps), disp, inv_eps)
-
   if sample_at_infinity:
     acc = weights[..., :-1].sum(axis=-1)
 
-  return rgb, exp_depth, med_depth, disp, acc, weights
+  out = {
+      'rgb': rgb,
+      'depth': exp_depth,
+      'med_depth': med_depth,
+      'acc': acc,
+  }
+  if return_weights:
+    out['weights'] = weights
+  return out
 
 
 def piecewise_constant_pdf(key, bins, weights, num_coarse_samples,

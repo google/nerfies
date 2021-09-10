@@ -23,9 +23,5 @@ def from_config(spec, **kwargs):
   ds_type = spec.pop('type')
   if ds_type == 'nerfies':
     return NerfiesDataSource(**spec, **kwargs)
-  if ds_type == 'hybrid':
-    sub_specs = spec.pop('datasources')
-    datasources = [from_config(s, **kwargs) for s in sub_specs]
-    return HybridDataSource(datasources, **spec, **kwargs)
 
   raise ValueError(f'Unknown datasource type {ds_type!r}')

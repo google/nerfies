@@ -26,8 +26,7 @@ from jax import tree_util
 import jax.numpy as jnp
 import numpy as np
 from scipy import interpolate
-from scipy.spatial.transform import Rotation
-from scipy.spatial.transform import Slerp
+from scipy.spatial import transform as scipy_transform
 import tqdm
 
 
@@ -159,7 +158,8 @@ def interpolate_cameras(cameras, num_samples: int):
     positions.append(camera.position)
 
   in_times = np.linspace(0, 1, len(rotations))
-  slerp = Slerp(in_times, Rotation.from_dcm(rotations))
+  slerp = scipy_transform.Slerp(
+      in_times, scipy_transform.Rotation.from_dcm(rotations))
   spline = interpolate.CubicSpline(in_times, positions)
 
   out_times = np.linspace(0, 1, num_samples)
@@ -328,7 +328,7 @@ def general_loss_with_squared_residual(squared_x, alpha, scale):
               alpha == 2, loss_two,
               jnp.where(alpha == jnp.inf, loss_posinf, loss_otherwise))))
 
-  return loss
+  return scale * loss
 
 
 def shard(xs, device_count=None):
@@ -377,7 +377,7 @@ def strided_subset(sequence, count):
 
 def tree_collate(list_of_pytrees):
   """Collates a list of pytrees with the same structure."""
-  return tree_util.tree_multimap(lambda *x: np.asarray(x), *list_of_pytrees)
+  return tree_util.tree_multimap(lambda *x: np.stack(x), *list_of_pytrees)
 
 
 @contextlib.contextmanager

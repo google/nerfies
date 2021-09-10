@@ -1,15 +1,15 @@
-# Deformable Neural Radiance Fields
+# Nerfies: Deformable Neural Radiance Fields
 
-This is the code for Deformable Neural Radiance Fields, a.k.a. Nerfies.
+This is the code for Nerfies: Deformable Neural Radiance Fields.
 
  * [Project Page](https://nerfies.github.io)
  * [Paper](https://arxiv.org/abs/2011.12948)
  * [Video](https://www.youtube.com/watch?v=MrKrnHhk8IA)
  
-This codebase contains a re-implementation of Nerfies using [JAX](https://github.com/google/jax),
+This codebase is implemented using [JAX](https://github.com/google/jax), 
 building on [JaxNeRF](https://github.com/google-research/google-research/tree/master/jaxnerf).
-We have been careful to match implementation details and have reproduced the original
-results presented in the paper.
+
+This repository has been updated to reflect the version used for our ICCV 2021 submission.
 
 ## Demo
 
@@ -29,7 +29,7 @@ refer to the instructions below on how to train on your own machine.
 | Render a Nerfie video| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/nerfies/blob/main/notebooks/Nerfies_Render_Video.ipynb)|
  
 ## Setup
-The code can be run under any environment with Python 3.7 and above.
+The code can be run under any environment with Python 3.8 and above.
 (It may run with lower versions, but we have not tested it).
 
 We recommend using [Miniconda](https://docs.conda.io/en/latest/miniconda.html) and setting up an environment:
@@ -43,10 +43,7 @@ Next, install the required packages:
 Install the appropriate JAX distribution for your environment by  [following the instructions here](https://github.com/google/jax#installation). For example:
 
     # For CUDA version 11.0
-    pip install --upgrade jax jaxlib==0.1.57+cuda110 -f https://storage.googleapis.com/jax-releases/jax_releases.html
-    
-    # For CUDA version 10.1
-    pip install --upgrade jax jaxlib==0.1.57+cuda101 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+    pip install --upgrade "jax[cuda111]" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 
 ## Training
@@ -56,7 +53,7 @@ After preparing a dataset, you can train a Nerfie by running:
     export EXPERIMENT_PATH=/path/to/save/experiment/to
     python train.py \
         --data_dir $DATASET_PATH \
-        --exp_dir $EXPERIMENT_PATH \
+        --base_folder $EXPERIMENT_PATH \
         --gin_configs configs/test_vrig.gin
  
 To plot telemetry to Tensorboard and render checkpoints on the fly, also
@@ -64,7 +61,7 @@ launch an evaluation job by running:
 
     python eval.py \
         --data_dir $DATASET_PATH \
-        --exp_dir $EXPERIMENT_PATH \
+        --base_folder $EXPERIMENT_PATH \
         --gin_configs configs/test_vrig.gin
 
 The two jobs should use a mutually exclusive set of GPUs. This division allows the
@@ -223,7 +220,7 @@ it is some alphanumeric string such as `000054`.
 ## Citing
 If you find our work useful, please consider citing:
 ```BibTeX
-@article{park2020nerfies
+@article{park2021nerfies
   author    = {Park, Keunhong 
                and Sinha, Utkarsh 
                and Barron, Jonathan T. 
@@ -231,8 +228,8 @@ If you find our work useful, please consider citing:
                and Goldman, Dan B 
                and Seitz, Steven M. 
                and Martin-Brualla, Ricardo},
-  title     = {Deformable Neural Radiance Fields},
-  journal   = {arXiv preprint arXiv:2011.12948},
-  year      = {2020},
+  title     = {Nerfies: Deformable Neural Radiance Fields},
+  journal   = {ICCV},
+  year      = {2021},
 }
 ```

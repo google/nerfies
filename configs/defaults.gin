@@ -18,6 +18,8 @@
 
 num_warp_freqs = 8
 elastic_init_weight = 0.01
+lr_delay_steps = 2500
+lr_delay_mult = 0.01
 
 # Predefined warp alpha schedules.
 ANNEALED_WARP_ALPHA_SCHED = {
@@ -44,6 +46,20 @@ DECAYING_ELASTIC_LOSS_SCHED = {
   ]
 }
 
+DEFAULT_LR_SCHEDULE = {
+    'type': 'exponential',
+    'initial_value': %init_lr,
+    'final_value': %final_lr,
+    'num_steps': %max_steps,
+}
+
+DELAYED_LR_SCHEDULE = {
+  'type': 'delayed',
+  'delay_steps': %lr_delay_steps,
+  'delay_mult': %lr_delay_mult,
+  'base_schedule': %DEFAULT_LR_SCHEDULE,
+}
+
 # Common configs.
 ModelConfig.use_viewdirs = True
 ModelConfig.use_stratified_sampling = True
@@ -55,7 +71,7 @@ ExperimentConfig.image_scale = %image_scale
 ExperimentConfig.random_seed = 12345
 
 # Warp field configs.
-ModelConfig.use_warp = True
+ModelConfig.use_warp = False
 ModelConfig.warp_field_type = 'se3'
 ModelConfig.num_warp_freqs = %num_warp_freqs
 ModelConfig.num_warp_features = 8
@@ -63,17 +79,12 @@ ModelConfig.num_warp_features = 8
 # Use macros to make sure these are set somewhere.
 TrainConfig.batch_size = %batch_size
 TrainConfig.max_steps = %max_steps
-TrainConfig.lr_schedule = {
-  'type': 'exponential',
-  'initial_value': %init_lr,
-  'final_value': %final_lr,
-  'num_steps': %lr_decay_steps,
-}
+TrainConfig.lr_schedule = %DEFAULT_LR_SCHEDULE
 TrainConfig.warp_alpha_schedule = %CONSTANT_WARP_ALPHA_SCHED
 
 # Elastic loss.
-TrainConfig.use_elastic_loss = True
-TrainConfig.elastic_loss_weight_schedule = %DECAYING_ELASTIC_LOSS_SCHED
+TrainConfig.use_elastic_loss = False
+TrainConfig.elastic_loss_weight_schedule = %CONSTANT_ELASTIC_LOSS_SCHED
 
 # Background regularization loss.
 TrainConfig.use_background_loss = False

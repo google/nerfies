@@ -178,3 +178,12 @@ def load_depth(path: types.PathType) -> np.ndarray:
   if depth.dtype != np.uint16:
     raise ValueError('Depth image must be of type uint16.')
   return image_to_float32(depth) * 1000.0
+
+
+def checkerboard(h, w, size=8):
+  """Creates a checkerboard pattern with height h and width w."""
+  i = int(math.ceil(h / (size * 2)))
+  j = int(math.ceil(w / (size * 2)))
+  pattern = np.kron([[1, 0] * j, [0, 1] * j] * i,
+                    np.ones((size, size)))[:h, :w]
+  return np.clip(pattern + 0.8, 0.0, 1.0)

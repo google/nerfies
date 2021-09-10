@@ -38,6 +38,10 @@ def re(q):
   return q[..., 3:]
 
 
+def identity():
+  return jnp.array([0.0, 0.0, 0.0, 1.0])
+
+
 def conjugate(q):
   """Compute the conjugate of a quaternion."""
   return jnp.concatenate([-im(q), re(q)], axis=-1)
@@ -50,8 +54,11 @@ def inverse(q):
 
 def normalize(q):
   """Normalize a quaternion."""
-  norm = linalg.norm(q, axis=-1, keepdims=True)
-  return q / norm
+  return q / norm(q)
+
+
+def norm(q):
+  return linalg.norm(q, axis=-1, keepdims=True)
 
 
 def multiply(q1, q2):
@@ -119,3 +126,90 @@ def exp(q, eps=1e-8):
   w = jnp.cos(norm_v)
   xyz = jnp.sin(norm_v) * v / jnp.maximum(norm_v, eps * jnp.ones_like(norm_v))
   return exp_s * jnp.concatenate((xyz, w), axis=-1)
+
+
+def to_rotation_matrix(q):
+  """Constructs a rotation matrix from a quaternion.
+
+  Args:
+    q: a (*,4) array containing quaternions.
+
+  Returns:
+    A (*,3,3) array containing rotation matrices.
+  """
+  x, y, z, w = jnp.split(q, 4, axis=-1)
+  s = 1.0 / jnp.sum(q ** 2, axis=-1)
+  return jnp.stack([
+      jnp.stack([1 - 2 * s * (y ** 2 + z ** 2),
+                 2 * s * (x * y - z * w),
+                 2 * s * (x * z + y * w)], axis=0),
+      jnp.stack([2 * s * (x * y + z * w),
+                 1 - s * 2 * (x ** 2 + z ** 2),
+                 2 * s * (y * z - x * w)], axis=0),
+      jnp.stack([2 * s * (x * z - y * w),
+                 2 * s * (y * z + x * w),
+                 1 - 2 * s * (x ** 2 + y ** 2)], axis=0),
+  ], axis=0)
+
+
+def from_rotation_matrix(m, eps=1e-9):
+  """Construct quaternion from a rotation matrix.
+
+  Args:
+    m: a (*,3,3) array containing rotation matrices.
+    eps: a small number for numerical stability.
+
+  Returns:
+    A (*,4) array containing quaternions.
+  """
+  trace = jnp.trace(m)
+  m00 = m[..., 0, 0]
+  m01 = m[..., 0, 1]
+  m02 = m[..., 0, 2]
+  m10 = m[..., 1, 0]
+  m11 = m[..., 1, 1]
+  m12 = m[..., 1, 2]
+  m20 = m[..., 2, 0]
+  m21 = m[..., 2, 1]
+  m22 = m[..., 2, 2]
+
+  def tr_positive():
+    sq = jnp.sqrt(trace + 1.0) * 2.  # sq = 4 * w.
+    w = 0.25 * sq
+    x = jnp.divide(m21 - m12, sq)
+    y = jnp.divide(m02 - m20, sq)
+    z = jnp.divide(m10 - m01, sq)
+    return jnp.stack((x, y, z, w), axis=-1)
+
+  def cond_1():
+    sq = jnp.sqrt(1.0 + m00 - m11 - m22 + eps) * 2.  # sq = 4 * x.
+    w = jnp.divide(m21 - m12, sq)
+    x = 0.25 * sq
+    y = jnp.divide(m01 + m10, sq)
+    z = jnp.divide(m02 + m20, sq)
+    return jnp.stack((x, y, z, w), axis=-1)
+
+  def cond_2():
+    sq = jnp.sqrt(1.0 + m11 - m00 - m22 + eps) * 2.  # sq = 4 * y.
+    w = jnp.divide(m02 - m20, sq)
+    x = jnp.divide(m01 + m10, sq)
+    y = 0.25 * sq
+    z = jnp.divide(m12 + m21, sq)
+    return jnp.stack((x, y, z, w), axis=-1)
+
+  def cond_3():
+    sq = jnp.sqrt(1.0 + m22 - m00 - m11 + eps) * 2.  # sq = 4 * z.
+    w = jnp.divide(m10 - m01, sq)
+    x = jnp.divide(m02 + m20, sq)
+    y = jnp.divide(m12 + m21, sq)
+    z = 0.25 * sq
+    return jnp.stack((x, y, z, w), axis=-1)
+
+  def cond_idx(cond):
+    cond = jnp.expand_dims(cond, -1)
+    cond = jnp.tile(cond, [1] * (len(m.shape) - 2) + [4])
+    return cond
+
+  where_2 = jnp.where(cond_idx(m11 > m22), cond_2(), cond_3())
+  where_1 = jnp.where(cond_idx((m00 > m11) & (m00 > m22)), cond_1(), where_2)
+  return jnp.where(cond_idx(trace > 0), tr_positive(), where_1)

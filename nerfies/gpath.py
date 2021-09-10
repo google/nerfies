@@ -45,3 +45,6 @@ class GPath(pathlib.PurePosixPath):
 
   def is_dir(self):
     return tf.io.gfile.isdir(self)
+
+  def rmtree(self):
+    tf.io.gfile.rmtree(self)

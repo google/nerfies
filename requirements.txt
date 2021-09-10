@@ -1,15 +1,13 @@
-absl-py==0.11.0
-flax==0.3.0
-frozendict==1.2
-gast==0.3.3
-gin-config==0.4.0
+absl-py==0.13.0
+flax==0.3.4
+gin-config @ git+https://github.com/google/gin-config@243ba87b3fcfeb2efb4a920b8f19679b61a6f0dc
 imageio==2.9.0
-matplotlib==3.3.3
+immutabledict==2.2.0
+jax==0.2.20
 numpy==1.19.5
-opencv-python==4.5.1.48
-Pillow==8.1.0
-scipy==1.6.0
-tensorboard==2.4.1
-tensorflow==2.4.0
-tensorflow-hub==0.11.0
-tqdm==4.56.0
+opencv-python==4.5.3.56
+Pillow==8.3.2
+scikit-image==0.18.3
+scipy==1.7.1
+tensorboard==2.6.0
+tensorflow==2.6.0

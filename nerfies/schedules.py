@@ -19,7 +19,6 @@ import copy
 import math
 from typing import Any, Iterable, List, Tuple, Union
 
-import gin
 from jax import numpy as jnp
 
 
@@ -57,7 +56,6 @@ class Schedule(abc.ABC):
     return self.get(step)
 
 
-@gin.configurable()
 class ConstantSchedule(Schedule):
   """Linearly scaled scheduler."""
 
@@ -70,7 +68,6 @@ class ConstantSchedule(Schedule):
     return jnp.full_like(step, self.value, dtype=jnp.float32)
 
 
-@gin.configurable()
 class LinearSchedule(Schedule):
   """Linearly scaled scheduler."""
 
@@ -88,7 +85,6 @@ class LinearSchedule(Schedule):
     return (1.0 - alpha) * self.initial_value + alpha * self.final_value
 
 
-@gin.configurable()
 class ExponentialSchedule(Schedule):
   """Exponentially decaying scheduler."""
 
@@ -115,7 +111,6 @@ class ExponentialSchedule(Schedule):
     return self.initial_value * base**exponent
 
 
-@gin.configurable()
 class CosineEasingSchedule(Schedule):
   """Schedule that eases slowsly using a cosine."""
 
@@ -130,11 +125,10 @@ class CosineEasingSchedule(Schedule):
     alpha = jnp.minimum(step / self.num_steps, 1.0)
     scale = self.final_value - self.initial_value
     x = min(max(alpha, 0.0), 1.0)
-    return self.initial_value + scale * 0.5 * (1 +
-                                               math.cos(jnp.pi * x + jnp.pi))
+    return (self.initial_value
+            + scale * 0.5 * (1 + math.cos(jnp.pi * x + jnp.pi)))
 
 
-@gin.configurable()
 class StepSchedule(Schedule):
   """Schedule that eases slowsly using a cosine."""
 
@@ -162,7 +156,6 @@ class StepSchedule(Schedule):
       return self.initial_value * self.decay_factor**phase
 
 
-@gin.configurable()
 class PiecewiseSchedule(Schedule):
   """A piecewise combination of multiple schedules."""
 
@@ -179,6 +172,23 @@ class PiecewiseSchedule(Schedule):
     return schedule.get(step - base_idx)
 
 
+class DelayedSchedule(Schedule):
+  """Delays the start of the base schedule."""
+
+  def __init__(self, base_schedule: Schedule, delay_steps, delay_mult):
+    self.base_schedule = from_config(base_schedule)
+    self.delay_steps = delay_steps
+    self.delay_mult = delay_mult
+
+  def get(self, step):
+    delay_rate = (
+        self.delay_mult
+        + (1 - self.delay_mult)
+        * jnp.sin(0.5 * jnp.pi * jnp.clip(step / self.delay_steps, 0, 1)))
+
+    return delay_rate * self.base_schedule(step)
+
+
 SCHEDULE_MAP = {
     'constant': ConstantSchedule,
     'linear': LinearSchedule,
@@ -186,4 +196,5 @@ SCHEDULE_MAP = {
     'cosine_easing': CosineEasingSchedule,
     'step': StepSchedule,
     'piecewise': PiecewiseSchedule,
+    'delayed': DelayedSchedule,
 }

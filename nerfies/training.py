@@ -30,18 +30,20 @@ from jax import vmap
 from nerfies import model_utils
 from nerfies import models
 from nerfies import utils
-from nerfies import warping
 
 
 @struct.dataclass
 class ScalarParams:
   learning_rate: float
   elastic_loss_weight: float = 0.0
+  warp_reg_loss_weight: float = 0.0
+  warp_reg_loss_alpha: float = -2.0
+  warp_reg_loss_scale: float = 0.001
   background_loss_weight: float = 0.0
   background_noise_std: float = 0.001
 
 
-def save_checkpoint(path, state, keep=100):
+def save_checkpoint(path, state, keep=2):
   """Save the state to a checkpoint."""
   state_to_save = jax.device_get(jax.tree_map(lambda x: x[0], state))
   step = state_to_save.optimizer.state.step
@@ -52,7 +54,21 @@ def save_checkpoint(path, state, keep=100):
 
 
 @jax.jit
-def compute_elastic_loss(jacobian, alpha=-2.0, scale=0.03, eps=1e-6):
+def nearest_rotation_svd(matrix, eps=1e-6):
+  """Computes the nearest rotation using SVD."""
+  # TODO(keunhong): Currently this produces NaNs for some reason.
+  u, _, vh = jnp.linalg.svd(matrix + eps, compute_uv=True, full_matrices=False)
+  # Handle the case when there is a flip.
+  # M will be the identity matrix except when det(UV^T) = -1
+  # in which case the last diagonal of M will be -1.
+  det = jnp.linalg.det(u @ vh)
+  m = jnp.stack([jnp.ones_like(det), jnp.ones_like(det), det], axis=-1)
+  m = jnp.diag(m)
+  r = u @ m @ vh
+  return r
+
+
+def compute_elastic_loss(jacobian, eps=1e-6, loss_type='log_svals'):
   """Compute the elastic regularization loss.
 
   The loss is given by sum(log(S)^2). This penalizes the singular values
@@ -61,45 +77,60 @@ def compute_elastic_loss(jacobian, alpha=-2.0, scale=0.03, eps=1e-6):
 
   Args:
     jacobian: the Jacobian of the point transformation.
-    alpha: the alpha for the General loss.
-    scale: the scale for the General loss.
     eps: a small value to prevent taking the log of zero.
+    loss_type: which elastic loss type to use.
 
   Returns:
     The elastic regularization loss.
   """
-  svals = jnp.linalg.svd(jacobian, compute_uv=False)
-  log_svals = jnp.log(jnp.maximum(svals, eps))
-  sq_residual = jnp.sum(log_svals**2, axis=-1)
-  loss = scale * utils.general_loss_with_squared_residual(
-      sq_residual, alpha=alpha, scale=scale)
+  if loss_type == 'log_svals':
+    svals = jnp.linalg.svd(jacobian, compute_uv=False)
+    log_svals = jnp.log(jnp.maximum(svals, eps))
+    sq_residual = jnp.sum(log_svals**2, axis=-1)
+  elif loss_type == 'svals':
+    svals = jnp.linalg.svd(jacobian, compute_uv=False)
+    sq_residual = jnp.sum((svals - 1.0)**2, axis=-1)
+  elif loss_type == 'jtj':
+    jtj = jacobian @ jacobian.T
+    sq_residual = ((jtj - jnp.eye(3)) ** 2).sum() / 4.0
+  elif loss_type == 'div':
+    div = utils.jacobian_to_div(jacobian)
+    sq_residual = div ** 2
+  elif loss_type == 'det':
+    det = jnp.linalg.det(jacobian)
+    sq_residual = (det - 1.0) ** 2
+  elif loss_type == 'log_det':
+    det = jnp.linalg.det(jacobian)
+    sq_residual = jnp.log(jnp.maximum(det, eps)) ** 2
+  elif loss_type == 'nr':
+    rot = nearest_rotation_svd(jacobian)
+    sq_residual = jnp.sum((jacobian - rot) ** 2)
+  else:
+    raise NotImplementedError(
+        f'Unknown elastic loss type {loss_type!r}')
   residual = jnp.sqrt(sq_residual)
+  loss = utils.general_loss_with_squared_residual(
+      sq_residual, alpha=-2.0, scale=0.03)
   return loss, residual
 
 
 @functools.partial(jax.jit, static_argnums=0)
 def compute_background_loss(
-    model, state, params, key, points, noise_std, alpha=-2, scale=0.03):
+    model, state, params, key, points, noise_std, alpha=-2, scale=0.001):
   """Compute the background regularization loss."""
-  metadata = random.randint(key,
-                            (points.shape[0], 1),
-                            minval=0,
-                            maxval=model.num_warp_embeddings,
-                            dtype=jnp.uint32)
+  metadata = random.choice(key,
+                           jnp.array(model.warp_ids, jnp.uint32),
+                           shape=(points.shape[0], 1))
   point_noise = noise_std * random.normal(key, points.shape)
   points = points + point_noise
-  warp_field = warping.create_warp_field(
-      field_type=model.warp_field_type,
-      num_freqs=model.num_warp_freqs,
-      num_embeddings=model.num_warp_embeddings,
-      num_features=model.num_warp_features,
-      num_batch_dims=1,
-      **model.warp_kwargs)
-  warped_points = warp_field.apply(
+
+  warp_field = model.create_warp_field(model, num_batch_dims=1)
+  warp_out = warp_field.apply(
       {'params': params['warp_field']},
-      points, metadata, state.warp_alpha, False, False)
+      points, metadata, state.warp_extra, False, False)
+  warped_points = warp_out['warped_points'][..., :3]
   sq_residual = jnp.sum((warped_points - points)**2, axis=-1)
-  loss = scale * utils.general_loss_with_squared_residual(
+  loss = utils.general_loss_with_squared_residual(
       sq_residual, alpha=alpha, scale=scale)
   return loss
 
@@ -111,7 +142,9 @@ def train_step(model: models.NerfModel,
                scalar_params: ScalarParams,
                use_elastic_loss: bool = False,
                elastic_reduce_method: str = 'median',
-               use_background_loss: bool = False):
+               elastic_loss_type: str = 'log_svals',
+               use_background_loss: bool = False,
+               use_warp_reg_loss: bool = False):
   """One optimization step.
 
   Args:
@@ -124,7 +157,9 @@ def train_step(model: models.NerfModel,
     elastic_reduce_method: which method to use to reduce the samples for the
       elastic loss. 'median' selects the median depth point sample while
       'weight' computes a weighted sum using the density weights.
+    elastic_loss_type: which method to use for the elastic loss.
     use_background_loss: if True use the background regularization loss.
+    use_warp_reg_loss: if True use the warp regularization loss.
 
   Returns:
     new_state: model_utils.TrainState, new training state.
@@ -140,7 +175,9 @@ def train_step(model: models.NerfModel,
     }
     loss = rgb_loss
     if use_elastic_loss:
-      v_elastic_fn = jax.jit(vmap(vmap(compute_elastic_loss)))
+      elastic_fn = functools.partial(compute_elastic_loss,
+                                     loss_type=elastic_loss_type)
+      v_elastic_fn = jax.jit(vmap(vmap(jax.jit(elastic_fn))))
       weights = lax.stop_gradient(model_out['weights'])
       jacobian = model_out['warp_jacobian']
       # Pick the median point Jacobian.
@@ -159,6 +196,21 @@ def train_step(model: models.NerfModel,
       stats['residual/elastic'] = jnp.mean(elastic_residual)
       loss += scalar_params.elastic_loss_weight * elastic_loss
 
+    if use_warp_reg_loss:
+      weights = lax.stop_gradient(model_out['weights'])
+      depth_indices = model_utils.compute_depth_index(weights)
+      warp_mag = (
+          (model_out['points'] - model_out['warped_points']) ** 2).sum(axis=-1)
+      warp_reg_residual = jnp.take_along_axis(
+          warp_mag, depth_indices[..., None], axis=-1)
+      warp_reg_loss = utils.general_loss_with_squared_residual(
+          warp_reg_residual,
+          alpha=scalar_params.warp_reg_loss_alpha,
+          scale=scalar_params.warp_reg_loss_scale).mean()
+      stats['loss/warp_reg'] = warp_reg_loss
+      stats['residual/warp_reg'] = jnp.mean(jnp.sqrt(warp_reg_residual))
+      loss += scalar_params.warp_reg_loss_weight * warp_reg_loss
+
     if 'warp_jacobian' in model_out:
       jacobian = model_out['warp_jacobian']
       jacobian_det = jnp.linalg.det(jacobian)
@@ -176,7 +228,9 @@ def train_step(model: models.NerfModel,
   def _loss_fn(params):
     ret = model.apply({'params': params['model']},
                       batch,
-                      warp_alpha=state.warp_alpha,
+                      warp_extra=state.warp_extra,
+                      return_points=use_warp_reg_loss,
+                      return_weights=(use_warp_reg_loss or use_elastic_loss),
                       rngs={
                           'fine': fine_key,
                           'coarse': coarse_key

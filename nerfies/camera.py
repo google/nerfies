@@ -15,26 +15,26 @@
 """Class for handling cameras."""
 import copy
 import json
-from typing import Tuple
+from typing import Tuple, Union, Optional
 
-from jax import numpy as jnp
+import numpy as np
 
 from nerfies import gpath
 from nerfies import types
 
 
 def _compute_residual_and_jacobian(
-    x: jnp.ndarray,
-    y: jnp.ndarray,
-    xd: jnp.ndarray,
-    yd: jnp.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    xd: np.ndarray,
+    yd: np.ndarray,
     k1: float = 0.0,
     k2: float = 0.0,
     k3: float = 0.0,
     p1: float = 0.0,
     p2: float = 0.0,
-) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray,
-           jnp.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+           np.ndarray]:
   """Auxiliary function of radial_and_tangential_undistort()."""
   # let r(x, y) = x^2 + y^2;
   #     d(x, y) = 1 + k1 * r(x, y) + k2 * r(x, y) ^2 + k3 * r(x, y)^3;
@@ -72,15 +72,15 @@ def _compute_residual_and_jacobian(
 
 
 def _radial_and_tangential_undistort(
-    xd: jnp.ndarray,
-    yd: jnp.ndarray,
+    xd: np.ndarray,
+    yd: np.ndarray,
     k1: float = 0,
     k2: float = 0,
     k3: float = 0,
     p1: float = 0,
     p2: float = 0,
     eps: float = 1e-9,
-    max_iterations=10) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    max_iterations=10) -> Tuple[np.ndarray, np.ndarray]:
   """Computes undistorted (x, y) from (xd, yd)."""
   # Initialize from the distorted point.
   x = xd.copy()
@@ -92,12 +92,12 @@ def _radial_and_tangential_undistort(
     denominator = fy_x * fx_y - fx_x * fy_y
     x_numerator = fx * fy_y - fy * fx_y
     y_numerator = fy * fx_x - fx * fy_x
-    step_x = jnp.where(
-        jnp.abs(denominator) > eps, x_numerator / denominator,
-        jnp.zeros_like(denominator))
-    step_y = jnp.where(
-        jnp.abs(denominator) > eps, y_numerator / denominator,
-        jnp.zeros_like(denominator))
+    step_x = np.where(
+        np.abs(denominator) > eps, x_numerator / denominator,
+        np.zeros_like(denominator))
+    step_y = np.where(
+        np.abs(denominator) > eps, y_numerator / denominator,
+        np.zeros_like(denominator))
 
     x = x + step_x
     y = y + step_y
@@ -109,26 +109,31 @@ class Camera:
   """Class to handle camera geometry."""
 
   def __init__(self,
-               orientation: jnp.ndarray,
-               position: jnp.ndarray,
-               focal_length: float,
-               principal_point: jnp.ndarray,
-               skew: float,
-               pixel_aspect_ratio: float,
-               radial_distortion: jnp.ndarray,
-               tangential_distortion: jnp.ndarray,
-               image_size: jnp.ndarray,
-               dtype=jnp.float32):
+               orientation: np.ndarray,
+               position: np.ndarray,
+               focal_length: Union[np.ndarray, float],
+               principal_point: np.ndarray,
+               image_size: np.ndarray,
+               skew: Union[np.ndarray, float] = 0.0,
+               pixel_aspect_ratio: Union[np.ndarray, float] = 1.0,
+               radial_distortion: Optional[np.ndarray] = None,
+               tangential_distortion: Optional[np.ndarray] = None,
+               dtype=np.float32):
     """Constructor for camera class."""
-    self.orientation = orientation
-    self.position = position
-    self.focal_length = focal_length
-    self.principal_point = principal_point
-    self.skew = skew
-    self.pixel_aspect_ratio = pixel_aspect_ratio
-    self.radial_distortion = radial_distortion
-    self.tangential_distortion = tangential_distortion
-    self.image_size = image_size
+    if radial_distortion is None:
+      radial_distortion = np.array([0.0, 0.0, 0.0], dtype)
+    if tangential_distortion is None:
+      tangential_distortion = np.array([0.0, 0.0], dtype)
+
+    self.orientation = np.array(orientation, dtype)
+    self.position = np.array(position, dtype)
+    self.focal_length = np.array(focal_length, dtype)
+    self.principal_point = np.array(principal_point, dtype)
+    self.skew = np.array(skew, dtype)
+    self.pixel_aspect_ratio = np.array(pixel_aspect_ratio, dtype)
+    self.radial_distortion = np.array(radial_distortion, dtype)
+    self.tangential_distortion = np.array(tangential_distortion, dtype)
+    self.image_size = np.array(image_size, np.uint32)
     self.dtype = dtype
 
   @classmethod
@@ -138,29 +143,39 @@ class Camera:
     with path.open('r') as fp:
       camera_json = json.load(fp)
 
+    # Fix old camera JSON.
+    if 'tangential' in camera_json:
+      camera_json['tangential_distortion'] = camera_json['tangential']
+
     return cls(
-        orientation=jnp.asarray(camera_json['orientation']),
-        position=jnp.asarray(camera_json['position']),
+        orientation=np.asarray(camera_json['orientation']),
+        position=np.asarray(camera_json['position']),
         focal_length=camera_json['focal_length'],
-        principal_point=jnp.asarray(camera_json['principal_point']),
+        principal_point=np.asarray(camera_json['principal_point']),
         skew=camera_json['skew'],
         pixel_aspect_ratio=camera_json['pixel_aspect_ratio'],
-        radial_distortion=jnp.asarray(camera_json['radial_distortion']),
-        tangential_distortion=jnp.asarray(camera_json['tangential']),
-        image_size=jnp.asarray(camera_json['image_size']),
+        radial_distortion=np.asarray(camera_json['radial_distortion']),
+        tangential_distortion=np.asarray(camera_json['tangential_distortion']),
+        image_size=np.asarray(camera_json['image_size']),
     )
 
   def to_json(self):
     return {
-        'orientation': self.orientation.tolist(),
-        'position': self.position.tolist(),
+        k: (v.tolist() if hasattr(v, 'tolist') else v)
+        for k, v in self.get_parameters().items()
+    }
+
+  def get_parameters(self):
+    return {
+        'orientation': self.orientation,
+        'position': self.position,
         'focal_length': self.focal_length,
-        'principal_point': self.principal_point.tolist(),
+        'principal_point': self.principal_point,
         'skew': self.skew,
         'pixel_aspect_ratio': self.pixel_aspect_ratio,
-        'radial_distortion': self.radial_distortion.tolist(),
-        'tangential': self.tangential_distortion.tolist(),
-        'image_size': self.image_size.tolist(),
+        'radial_distortion': self.radial_distortion,
+        'tangential_distortion': self.tangential_distortion,
+        'image_size': self.image_size,
     }
 
   @property
@@ -203,7 +218,11 @@ class Camera:
   def optical_axis(self):
     return self.orientation[2, :]
 
-  def pixel_to_local_rays(self, pixels: jnp.ndarray):
+  @property
+  def translation(self):
+    return -np.matmul(self.orientation, self.position)
+
+  def pixel_to_local_rays(self, pixels: np.ndarray):
     """Returns the local ray directions for the provided pixels."""
     y = ((pixels[..., 1] - self.principal_point_y) / self.scale_factor_y)
     x = ((pixels[..., 0] - self.principal_point_x - y * self.skew) /
@@ -219,11 +238,10 @@ class Camera:
           p1=self.tangential_distortion[0],
           p2=self.tangential_distortion[1])
 
-    dirs = jnp.stack([x, y, jnp.ones_like(x)], axis=-1)
-    return dirs / jnp.linalg.norm(dirs, axis=-1, keepdims=True)
+    dirs = np.stack([x, y, np.ones_like(x)], axis=-1)
+    return dirs / np.linalg.norm(dirs, axis=-1, keepdims=True)
 
-  def pixels_to_rays(self,
-                     pixels: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+  def pixels_to_rays(self, pixels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Returns the rays for the provided pixels.
 
     Args:
@@ -239,31 +257,31 @@ class Camera:
                        f'dtype ({self.dtype!r})')
 
     batch_shape = pixels.shape[:-1]
-    pixels = pixels.reshape((-1, 2))
+    pixels = np.reshape(pixels, (-1, 2))
 
     local_rays_dir = self.pixel_to_local_rays(pixels)
-    rays_dir = self.orientation.T @ local_rays_dir[..., jnp.newaxis]
-    rays_dir = jnp.squeeze(rays_dir, axis=-1)
+    rays_dir = np.matmul(self.orientation.T, local_rays_dir[..., np.newaxis])
+    rays_dir = np.squeeze(rays_dir, axis=-1)
 
     # Normalize rays.
-    rays_dir /= jnp.linalg.norm(rays_dir, axis=-1, keepdims=True)
+    rays_dir /= np.linalg.norm(rays_dir, axis=-1, keepdims=True)
     rays_dir = rays_dir.reshape((*batch_shape, 3))
     return rays_dir
 
-  def pixels_to_points(self, pixels: jnp.ndarray, depth: jnp.ndarray):
+  def pixels_to_points(self, pixels: np.ndarray, depth: np.ndarray):
     rays_through_pixels = self.pixels_to_rays(pixels)
-    cosa = rays_through_pixels @ self.optical_axis
+    cosa = np.matmul(rays_through_pixels, self.optical_axis)
     points = (
-        rays_through_pixels * depth[..., jnp.newaxis] / cosa[..., jnp.newaxis] +
+        rays_through_pixels * depth[..., np.newaxis] / cosa[..., np.newaxis] +
         self.position)
     return points
 
-  def points_to_local_points(self, points: jnp.ndarray):
+  def points_to_local_points(self, points: np.ndarray):
     translated_points = points - self.position
-    local_points = (self.orientation @ translated_points.T).T
+    local_points = (np.matmul(self.orientation, translated_points.T)).T
     return local_points
 
-  def project(self, points: jnp.ndarray):
+  def project(self, points: np.ndarray):
     """Projects a 3D point (x,y,z) to a pixel position (x,y)."""
     batch_shape = points.shape[:-1]
     points = points.reshape((-1, 3))
@@ -290,15 +308,17 @@ class Camera:
 
     # Map the distorted ray to the image plane and return the depth.
     pixel_x = self.focal_length * x + self.skew * y + self.principal_point_x
-    pixel_y = self.focal_length * self.pixel_aspect_ratio * y + self.principal_point_y
+    pixel_y = (self.focal_length * self.pixel_aspect_ratio * y
+               + self.principal_point_y)
 
-    pixels = jnp.stack([pixel_x, pixel_y], axis=-1)
+    pixels = np.stack([pixel_x, pixel_y], axis=-1)
     return pixels.reshape((*batch_shape, 2))
 
   def get_pixel_centers(self):
     """Returns the pixel centers."""
-    shape = self.image_shape
-    return jnp.moveaxis(jnp.indices(shape, dtype=self.dtype)[::-1], 0, -1) + 0.5
+    xx, yy = np.meshgrid(np.arange(self.image_size_x, dtype=self.dtype),
+                         np.arange(self.image_size_y, dtype=self.dtype))
+    return np.stack([xx, yy], axis=-1) + 0.5
 
   def scale(self, scale: float):
     """Scales the camera."""
@@ -314,9 +334,92 @@ class Camera:
         pixel_aspect_ratio=self.pixel_aspect_ratio,
         radial_distortion=self.radial_distortion.copy(),
         tangential_distortion=self.tangential_distortion.copy(),
-        image_size=jnp.array((int(round(self.image_size[0] * scale)),
-                              int(round(self.image_size[1] * scale)))),
+        image_size=np.array((int(round(self.image_size[0] * scale)),
+                             int(round(self.image_size[1] * scale)))),
     )
+    return new_camera
+
+  def look_at(self, position, look_at, up, eps=1e-6):
+    """Creates a copy of the camera which looks at a given point.
+
+    Copies the provided vision_sfm camera and returns a new camera that is
+    positioned at `camera_position` while looking at `look_at_position`.
+    Camera intrinsics are copied by this method. A common value for the
+    up_vector is (0, 1, 0).
+
+    Args:
+      position: A (3,) numpy array representing the position of the camera.
+      look_at: A (3,) numpy array representing the location the camera looks at.
+      up: A (3,) numpy array representing the up direction, whose projection is
+        parallel to the y-axis of the image plane.
+      eps: a small number to prevent divides by zero.
+
+    Returns:
+      A new camera that is copied from the original but is positioned and
+        looks at the provided coordinates.
+
+    Raises:
+      ValueError: If the camera position and look at position are very close
+        to each other or if the up-vector is parallel to the requested optical
+        axis.
+    """
+
+    look_at_camera = self.copy()
+    optical_axis = look_at - position
+    norm = np.linalg.norm(optical_axis)
+    if norm < eps:
+      raise ValueError('The camera center and look at position are too close.')
+    optical_axis /= norm
+
+    right_vector = np.cross(optical_axis, up)
+    norm = np.linalg.norm(right_vector)
+    if norm < eps:
+      raise ValueError('The up-vector is parallel to the optical axis.')
+    right_vector /= norm
+
+    # The three directions here are orthogonal to each other and form a right
+    # handed coordinate system.
+    camera_rotation = np.identity(3)
+    camera_rotation[0, :] = right_vector
+    camera_rotation[1, :] = np.cross(optical_axis, right_vector)
+    camera_rotation[2, :] = optical_axis
+
+    look_at_camera.position = position
+    look_at_camera.orientation = camera_rotation
+    return look_at_camera
+
+  def crop_image_domain(
+      self, left: int = 0, right: int = 0, top: int = 0, bottom: int = 0):
+    """Returns a copy of the camera with adjusted image bounds.
+
+    Args:
+      left: number of pixels by which to reduce (or augment, if negative) the
+        image domain at the associated boundary.
+      right: likewise.
+      top: likewise.
+      bottom: likewise.
+
+    The crop parameters may not cause the camera image domain dimensions to
+    become non-positive.
+
+    Returns:
+      A camera with adjusted image dimensions.  The focal length is unchanged,
+      and the principal point is updated to preserve the original principal
+      axis.
+    """
+
+    crop_left_top = np.array([left, top])
+    crop_right_bottom = np.array([right, bottom])
+    new_resolution = self.image_size - crop_left_top - crop_right_bottom
+    new_principal_point = self.principal_point - crop_left_top
+    if np.any(new_resolution <= 0):
+      raise ValueError('Crop would result in non-positive image dimensions.')
+
+    new_camera = self.copy()
+    new_camera.image_size = np.array([int(new_resolution[0]),
+                                      int(new_resolution[1])])
+    new_camera.principal_point = np.array([new_principal_point[0],
+                                           new_principal_point[1]])
     return new_camera
 
   def copy(self):

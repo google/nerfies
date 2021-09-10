@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Lint as: python3
 """Evaluation script for Nerf."""
 import collections
 import functools
@@ -43,12 +42,17 @@ from nerfies import types
 from nerfies import utils
 from nerfies import visualization as viz
 
-flags.DEFINE_string('exp_dir', None, 'where to store ckpts and logs')
+flags.DEFINE_enum('mode', None, ['jax_cpu', 'jax_gpu', 'jax_tpu'],
+                  'Distributed strategy approach.')
+
+flags.DEFINE_string('base_folder', None, 'where to store ckpts and logs')
+flags.mark_flag_as_required('base_folder')
 flags.DEFINE_string('data_dir', None, 'input data directory.')
-flags.mark_flag_as_required('exp_dir')
 flags.DEFINE_multi_string('gin_bindings', None, 'Gin parameter bindings.')
 flags.DEFINE_multi_string('gin_configs', (), 'Gin config files.')
 FLAGS = flags.FLAGS
+
+jax.config.parse_flags_with_absl()
 
 
 def compute_multiscale_ssim(image1: jnp.ndarray, image2: jnp.ndarray):
@@ -70,18 +74,26 @@ def process_batch(*,
                   save_dir: Optional[gpath.GPath],
                   datasource: datasets.DataSource):
   """Process and plot a single batch."""
-  rgb, depth_exp, depth_med, acc = render_fn(state, batch, rng=rng)
+  item_id = item_id.replace('/', '_')
+  render = render_fn(state, batch, rng=rng)
   out = {}
-  if jax.host_id() != 0:
+  if jax.process_index() != 0:
     return out
 
+  rgb = render['rgb']
+  acc = render['acc']
+  depth_exp = render['depth']
+  depth_med = render['med_depth']
   colorize_depth = functools.partial(viz.colorize,
                                      cmin=datasource.near,
                                      cmax=datasource.far,
                                      invert=True)
 
-  depth_exp_viz = colorize_depth(depth_exp[..., 0])
-  depth_med_viz = colorize_depth(depth_med[..., 0])
+  depth_exp_viz = colorize_depth(depth_exp)
+  depth_med_viz = colorize_depth(depth_med)
+  disp_exp_viz = viz.colorize(1.0 / depth_exp)
+  disp_med_viz = viz.colorize(1.0 / depth_med)
+  acc_viz = viz.colorize(acc, cmin=0.0, cmax=1.0)
   if save_dir:
     save_dir.mkdir(parents=True, exist_ok=True)
     image_utils.save_image(save_dir / f'rgb_{item_id}.png',
@@ -89,16 +101,19 @@ def process_batch(*,
     image_utils.save_image(save_dir / f'depth_expected_viz_{item_id}.png',
                            image_utils.image_to_uint8(depth_exp_viz))
     image_utils.save_depth(save_dir / f'depth_expected_{item_id}.png',
-                           depth_med[..., 0])
+                           depth_exp)
     image_utils.save_image(save_dir / f'depth_median_viz_{item_id}.png',
                            image_utils.image_to_uint8(depth_med_viz))
     image_utils.save_depth(save_dir / f'depth_median_{item_id}.png',
-                           depth_med[..., 0])
+                           depth_med)
 
   summary_writer.image(f'rgb/{tag}/{item_id}', rgb, step)
   summary_writer.image(f'depth-expected/{tag}/{item_id}', depth_exp_viz, step)
   summary_writer.image(f'depth-median/{tag}/{item_id}', depth_med_viz, step)
-  summary_writer.image(f'acc/{tag}/{item_id}', acc, step)
+  summary_writer.image(f'disparity-expected/{tag}/{item_id}', disp_exp_viz,
+                       step)
+  summary_writer.image(f'disparity-median/{tag}/{item_id}', disp_med_viz, step)
+  summary_writer.image(f'acc/{tag}/{item_id}', acc_viz, step)
 
   if 'rgb' in batch:
     rgb_target = batch['rgb']
@@ -133,9 +148,6 @@ def process_batch(*,
         abs(depth_target - depth_exp).squeeze(axis=-1), cmin=0, cmax=1)
     summary_writer.image(
         f'depth-expected-error/{tag}/{item_id}', depth_exp_error, step)
-    rel_disp_pred = viz.colorize(1.0 / depth_exp[..., 0])
-    summary_writer.image(
-        f'relative-disparity/{tag}/{item_id}', rel_disp_pred, step)
 
   return out
 
@@ -174,6 +186,11 @@ def process_iterator(tag: str,
         logging.info('\tUsing camera_id = %d', camera_id)
         metadata['camera'] = jnp.full(shape, fill_value=camera_id,
                                       dtype=jnp.uint32)
+      if datasource.use_time:
+        timestamp = random.uniform(test_rng, minval=0.0, maxval=1.0)
+        logging.info('\tUsing time = %d', timestamp)
+        metadata['time'] = jnp.full(
+            shape, fill_value=timestamp, dtype=jnp.uint32)
       batch['metadata'] = metadata
 
     stats = process_batch(batch=batch,
@@ -186,18 +203,27 @@ def process_iterator(tag: str,
                           summary_writer=summary_writer,
                           save_dir=save_dir,
                           datasource=datasource)
-    if jax.host_id() == 0:
+    if jax.process_index() == 0:
       for k, v in stats.items():
         meters[k].update(v)
 
-  if jax.host_id() == 0:
+  if jax.process_index() == 0:
     for meter_name, meter in meters.items():
       summary_writer.scalar(tag=f'metrics-eval/{meter_name}/{tag}',
                             value=meter.reduce('mean'),
                             step=step)
 
 
+def delete_old_renders(render_dir, max_renders):
+  render_paths = sorted(render_dir.iterdir())
+  paths_to_delete = render_paths[:-max_renders]
+  for path in paths_to_delete:
+    logging.info('Removing render directory %s', str(path))
+    path.rmtree()
+
+
 def main(argv):
+  tf.config.experimental.set_visible_devices([], 'GPU')
   del argv
   logging.info('*** Starting experiment')
   gin_configs = FLAGS.gin_configs
@@ -215,7 +241,7 @@ def main(argv):
   eval_config = configs.EvalConfig()
 
   # Get directory information.
-  exp_dir = gpath.GPath(FLAGS.exp_dir)
+  exp_dir = gpath.GPath(FLAGS.base_folder)
   if exp_config.subname:
     exp_dir = exp_dir / exp_config.subname
   logging.info('\texp_dir = %s', exp_dir)
@@ -235,9 +261,16 @@ def main(argv):
   checkpoint_dir = exp_dir / 'checkpoints'
   logging.info('\tcheckpoint_dir = %s', checkpoint_dir)
 
+  logging.info('Starting host %d. There are %d hosts : %s', jax.process_index(),
+               jax.process_count(), str(jax.process_indexs()))
+  logging.info('Found %d accelerator devices: %s.', jax.local_device_count(),
+               str(jax.local_devices()))
+  logging.info('Found %d total devices: %s.', jax.device_count(),
+               str(jax.devices()))
+
   rng = random.PRNGKey(20200823)
 
-  devices_to_use = jax.devices()
+  devices_to_use = jax.local_devices()
   n_devices = len(
       devices_to_use) if devices_to_use else jax.local_device_count()
 
@@ -254,7 +287,9 @@ def main(argv):
       use_appearance_id=model_config.use_appearance_metadata,
       use_camera_id=model_config.use_camera_metadata,
       use_warp_id=model_config.use_warp,
-      random_seed=exp_config.random_seed)
+      use_time=model_config.warp_metadata_encoder_type == 'time',
+      random_seed=exp_config.random_seed,
+      **exp_config.datasource_kwargs)
 
   # Get training IDs to evaluate.
   train_eval_ids = utils.strided_subset(
@@ -275,13 +310,13 @@ def main(argv):
 
   rng, key = random.split(rng)
   params = {}
-  model, params['model'] = models.nerf(
+  model, params['model'] = models.construct_nerf(
       key,
       model_config,
       batch_size=eval_config.chunk,
-      num_appearance_embeddings=len(datasource.appearance_ids),
-      num_camera_embeddings=len(datasource.camera_ids),
-      num_warp_embeddings=len(datasource.warp_ids),
+      appearance_ids=datasource.appearance_ids,
+      camera_ids=datasource.camera_ids,
+      warp_ids=datasource.warp_ids,
       near=datasource.near,
       far=datasource.far,
       use_warp_jacobian=False,
@@ -289,13 +324,13 @@ def main(argv):
 
   optimizer_def = optim.Adam(0.0)
   optimizer = optimizer_def.create(params)
-  init_state = model_utils.TrainState(optimizer=optimizer, warp_alpha=0.0)
+  init_state = model_utils.TrainState(optimizer=optimizer)
   del params
 
-  def _model_fn(key_0, key_1, params, rays_dict, alpha):
+  def _model_fn(key_0, key_1, params, rays_dict, warp_extra):
     out = model.apply({'params': params},
                       rays_dict,
-                      warp_alpha=alpha,
+                      warp_extra=warp_extra,
                       rngs={
                           'coarse': key_0,
                           'fine': key_1
@@ -306,7 +341,7 @@ def main(argv):
   pmodel_fn = jax.pmap(
       # Note rng_keys are useless in eval mode since there's no randomness.
       _model_fn,
-      in_axes=(0, 0, 0, 0, None),  # Only distribute the data input.
+      in_axes=(0, 0, 0, 0, 0),  # Only distribute the data input.
       devices=devices_to_use,
       donate_argnums=(3,),  # Donate the 'rays' argument.
       axis_name='batch',
@@ -335,6 +370,18 @@ def main(argv):
       continue
 
     save_dir = renders_dir if eval_config.save_output else None
+    process_iterator(
+        tag='val',
+        item_ids=val_eval_ids,
+        iterator=val_eval_iter,
+        state=state,
+        rng=rng,
+        step=step,
+        render_fn=render_fn,
+        summary_writer=summary_writer,
+        save_dir=save_dir,
+        datasource=datasource)
+
     process_iterator(tag='train',
                      item_ids=train_eval_ids,
                      iterator=train_eval_iter,
@@ -345,16 +392,7 @@ def main(argv):
                      summary_writer=summary_writer,
                      save_dir=save_dir,
                      datasource=datasource)
-    process_iterator(tag='val',
-                     item_ids=val_eval_ids,
-                     iterator=val_eval_iter,
-                     state=state,
-                     rng=rng,
-                     step=step,
-                     render_fn=render_fn,
-                     summary_writer=summary_writer,
-                     save_dir=save_dir,
-                     datasource=datasource)
+
     if test_eval_iter:
       process_iterator(tag='test',
                        item_ids=test_eval_ids,
@@ -366,6 +404,9 @@ def main(argv):
                        summary_writer=summary_writer,
                        save_dir=save_dir,
                        datasource=datasource)
+
+    if save_dir:
+      delete_old_renders(renders_dir, eval_config.max_render_checkpoints)
 
     if eval_config.eval_once:
       break

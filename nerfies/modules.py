@@ -23,39 +23,83 @@ import jax.numpy as jnp
 from nerfies import types
 
 
+class MLP(nn.Module):
+  """Basic MLP class with hidden layers and an output layers."""
+  depth: int
+  width: int
+  hidden_init: types.Initializer = nn.initializers.xavier_uniform()
+  hidden_activation: types.Activation = nn.relu
+  output_init: Optional[types.Initializer] = None
+  output_channels: int = 0
+  output_activation: Optional[types.Activation] = lambda x: x
+  use_bias: bool = True
+  skips: Tuple[int] = tuple()
+
+  @nn.compact
+  def __call__(self, x):
+    inputs = x
+    for i in range(self.depth):
+      layer = nn.Dense(
+          self.width,
+          use_bias=self.use_bias,
+          kernel_init=self.hidden_init,
+          name=f'hidden_{i}')
+      if i in self.skips:
+        x = jnp.concatenate([x, inputs], axis=-1)
+      x = layer(x)
+      x = self.hidden_activation(x)
+
+    if self.output_channels > 0:
+      logit_layer = nn.Dense(
+          self.output_channels,
+          use_bias=self.use_bias,
+          kernel_init=self.output_init,
+          name='logit')
+      x = logit_layer(x)
+      if self.output_activation is not None:
+        x = self.output_activation(x)
+
+    return x
+
+
 class NerfMLP(nn.Module):
   """A simple MLP.
 
   Attributes:
     nerf_trunk_depth: int, the depth of the first part of MLP.
     nerf_trunk_width: int, the width of the first part of MLP.
-    nerf_condition_depth: int, the depth of the second part of MLP.
-    nerf_condition_width: int, the width of the second part of MLP.
+    nerf_rgb_branch_depth: int, the depth of the second part of MLP.
+    nerf_rgb_branch_width: int, the width of the second part of MLP.
     activation: function, the activation function used in the MLP.
     skips: which layers to add skip layers to.
     alpha_channels: int, the number of alpha_channelss.
     rgb_channels: int, the number of rgb_channelss.
+    condition_density: if True put the condition at the begining which
+      conditions the density of the field.
   """
-  nerf_trunk_depth: int = 8
-  nerf_trunk_width: int = 256
-  nerf_condition_depth: int = 1
-  nerf_condition_width: int = 128
-  activation: types.Activation = nn.relu
-  skips: Tuple[int] = (4,)
-  alpha_channels: int = 1
+  trunk_depth: int = 8
+  trunk_width: int = 256
+
+  rgb_branch_depth: int = 1
+  rgb_branch_width: int = 128
   rgb_channels: int = 3
 
+  alpha_branch_depth: int = 0
+  alpha_branch_width: int = 128
+  alpha_channels: int = 1
+
+  activation: types.Activation = nn.relu
+  skips: Tuple[int] = (4,)
+
   @nn.compact
-  def __call__(self, x, condition):
+  def __call__(self, x, trunk_condition, alpha_condition, rgb_condition):
     """Multi-layer perception for nerf.
 
     Args:
       x: sample points with shape [batch, num_coarse_samples, feature].
-      condition: condition array of shape [batch, feature], if not None, this
-        variable will be part of the input to the second part of the MLP
-        concatenated with the output vector of the first part of the MLP. If
-        None, only the first part of the MLP will be used with input x. In the
-        original paper, this variable is the view direction.
+      trunk_condition: a condition array provided to the trunk.
+      alpha_condition: a condition array provided to the alpha branch.
+      rgb_condition: a condition array provided in the RGB branch.
 
     Returns:
       raw: [batch, num_coarse_samples, rgb_channels+alpha_channels].
@@ -67,29 +111,58 @@ class NerfMLP(nn.Module):
     num_samples = x.shape[1]
     x = x.reshape([-1, feature_dim])
 
-    inputs = x
-    for i in range(self.nerf_trunk_depth):
-      x = dense(self.nerf_trunk_width, name=f'trunk_{i}')(x)
-      x = self.activation(x)
-      if i in self.skips:
-        x = jnp.concatenate([inputs, x], axis=-1)
-    alpha = dense(self.alpha_channels, name='alpha_logits')(x)
-    if condition is not None:
-      # Output of the first part of MLP.
-      bottleneck = dense(self.nerf_trunk_width, name='bottleneck')(x)
+    def broadcast_condition(c):
       # Broadcast condition from [batch, feature] to
       # [batch, num_coarse_samples, feature] since all the samples along the
       # same ray has the same viewdir.
-      condition = jnp.tile(condition[:, None, :], (1, num_samples, 1))
+      c = jnp.tile(c[:, None, :], (1, num_samples, 1))
       # Collapse the [batch, num_coarse_samples, feature] tensor to
       # [batch * num_coarse_samples, feature] to be fed into nn.Dense.
-      condition = condition.reshape([-1, condition.shape[-1]])
-      x = jnp.concatenate([bottleneck, condition], axis=-1)
-      # Here use 1 extra layer to align with the original nerf model.
-      for i in range(self.nerf_condition_depth):
-        x = dense(self.nerf_condition_width, name=f'condition_{i}')(x)
-        x = self.activation(x)
-    rgb = dense(self.rgb_channels, name='rgb_logits')(x)
+      c = c.reshape([-1, c.shape[-1]])
+      return c
+
+    trunk_mlp = MLP(depth=self.trunk_depth,
+                    width=self.trunk_width,
+                    hidden_activation=self.activation,
+                    hidden_init=jax.nn.initializers.glorot_uniform(),
+                    skips=self.skips)
+    rgb_mlp = MLP(depth=self.rgb_branch_depth,
+                  width=self.rgb_branch_width,
+                  hidden_activation=self.activation,
+                  hidden_init=jax.nn.initializers.glorot_uniform(),
+                  output_init=jax.nn.initializers.glorot_uniform(),
+                  output_channels=self.rgb_channels)
+    alpha_mlp = MLP(depth=self.alpha_branch_depth,
+                    width=self.alpha_branch_width,
+                    hidden_activation=self.activation,
+                    hidden_init=jax.nn.initializers.glorot_uniform(),
+                    output_init=jax.nn.initializers.glorot_uniform(),
+                    output_channels=self.alpha_channels)
+
+    if trunk_condition is not None:
+      trunk_condition = broadcast_condition(trunk_condition)
+      trunk_input = jnp.concatenate([x, trunk_condition], axis=-1)
+    else:
+      trunk_input = x
+    x = trunk_mlp(trunk_input)
+
+    if (alpha_condition is not None) or (rgb_condition is not None):
+      bottleneck = dense(self.trunk_width, name='bottleneck')(x)
+
+    if alpha_condition is not None:
+      alpha_condition = broadcast_condition(alpha_condition)
+      alpha_input = jnp.concatenate([bottleneck, alpha_condition], axis=-1)
+    else:
+      alpha_input = x
+    alpha = alpha_mlp(alpha_input)
+
+    if rgb_condition is not None:
+      rgb_condition = broadcast_condition(rgb_condition)
+      rgb_input = jnp.concatenate([bottleneck, rgb_condition], axis=-1)
+    else:
+      rgb_input = x
+    rgb = rgb_mlp(rgb_input)
+
     return {
         'rgb': rgb.reshape((-1, num_samples, self.rgb_channels)),
         'alpha': alpha.reshape((-1, num_samples, self.alpha_channels)),
@@ -101,11 +174,13 @@ class SinusoidalEncoder(nn.Module):
 
   Attributes:
     num_freqs: the number of frequency bands in the encoding.
-    max_freq_log2: the log (base 2) of the maximum frequency.
+    min_freq_log2: the log (base 2) of the lower frequency.
+    max_freq_log2: the log (base 2) of the upper frequency.
     scale: a scaling factor for the positional encoding.
     use_identity: if True use the identity encoding as well.
   """
   num_freqs: int
+  min_freq_log2: int = 0
   max_freq_log2: Optional[int] = None
   scale: float = 1.0
   use_identity: bool = True
@@ -115,7 +190,9 @@ class SinusoidalEncoder(nn.Module):
       max_freq_log2 = self.num_freqs - 1.0
     else:
       max_freq_log2 = self.max_freq_log2
-    self.freq_bands = 2.0**jnp.linspace(0.0, max_freq_log2, int(self.num_freqs))
+    self.freq_bands = 2.0**jnp.linspace(self.min_freq_log2,
+                                        max_freq_log2,
+                                        int(self.num_freqs))
 
     # (F, 1).
     self.freqs = jnp.reshape(self.freq_bands, (self.num_freqs, 1))
@@ -154,8 +231,10 @@ class SinusoidalEncoder(nn.Module):
 class AnnealedSinusoidalEncoder(nn.Module):
   """An annealed sinusoidal encoding."""
   num_freqs: int
+  min_freq_log2: int = 0
   max_freq_log2: Optional[int] = None
   scale: float = 1.0
+  use_identity: bool = True
 
   @nn.compact
   def __call__(self, x, alpha):
@@ -168,35 +247,76 @@ class AnnealedSinusoidalEncoder(nn.Module):
 
     base_encoder = SinusoidalEncoder(
         num_freqs=self.num_freqs,
+        min_freq_log2=self.min_freq_log2,
         max_freq_log2=self.max_freq_log2,
-        scale=self.scale)
+        scale=self.scale,
+        use_identity=self.use_identity)
     features = base_encoder(x)
-    identity, features = jnp.split(features, (x.shape[-1],), axis=-1)
+
+    if self.use_identity:
+      identity, features = jnp.split(features, (x.shape[-1],), axis=-1)
 
     # Apply the window by broadcasting to save on memory.
     features = jnp.reshape(features, (-1, 2, num_channels))
-    window = self.cosine_easing_window(self.num_freqs, alpha)
+    window = self.cosine_easing_window(
+        self.min_freq_log2, self.max_freq_log2, self.num_freqs, alpha)
     window = jnp.reshape(window, (-1, 1, 1))
     features = window * features
 
-    return jnp.concatenate([
-        identity,
-        features.flatten(),
-    ], axis=-1)
+    if self.use_identity:
+      return jnp.concatenate([
+          identity,
+          features.flatten(),
+      ], axis=-1)
+    else:
+      return features.flatten()
 
   @classmethod
-  def cosine_easing_window(cls, num_freqs, alpha):
+  def cosine_easing_window(cls, min_freq_log2, max_freq_log2, num_bands, alpha):
     """Eases in each frequency one by one with a cosine.
 
     This is equivalent to taking a Tukey window and sliding it to the right
     along the frequency spectrum.
 
     Args:
-      num_freqs: the number of frequencies.
+      min_freq_log2: the lower frequency band.
+      max_freq_log2: the upper frequency band.
+      num_bands: the number of frequencies.
       alpha: will ease in each frequency as alpha goes from 0.0 to num_freqs.
 
     Returns:
       A 1-d numpy array with num_sample elements containing the window.
     """
-    x = jnp.clip(alpha - jnp.arange(num_freqs, dtype=jnp.float32), 0.0, 1.0)
+    if max_freq_log2 is None:
+      max_freq_log2 = num_bands - 1.0
+    bands = jnp.linspace(min_freq_log2, max_freq_log2, num_bands)
+    x = jnp.clip(alpha - bands, 0.0, 1.0)
     return 0.5 * (1 + jnp.cos(jnp.pi * x + jnp.pi))
+
+
+class TimeEncoder(nn.Module):
+  """Encodes a timestamp to an embedding."""
+  num_freqs: int
+
+  features: int = 10
+  depth: int = 6
+  width: int = 64
+  skips: int = (4,)
+  hidden_init: types.Initializer = nn.initializers.xavier_uniform()
+  output_init: types.Activation = nn.initializers.uniform(scale=0.05)
+
+  def setup(self):
+    self.posenc = AnnealedSinusoidalEncoder(num_freqs=self.num_freqs)
+    self.mlp = MLP(
+        depth=self.depth,
+        width=self.width,
+        skips=self.skips,
+        hidden_init=self.hidden_init,
+        output_channels=self.features,
+        output_init=self.output_init)
+
+  def __call__(self, time, alpha=None):
+    if alpha is None:
+      alpha = self.num_freqs
+    encoded_time = self.posenc(time, alpha)
+    return self.mlp(encoded_time)
