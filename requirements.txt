@@ -10,4 +10,4 @@ Pillow==8.3.2
 scikit-image==0.18.3
 scipy==1.7.1
 tensorboard==2.6.0
-tensorflow==2.6.0
+tensorflow>=2.6.1
