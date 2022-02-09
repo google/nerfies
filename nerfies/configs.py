@@ -16,7 +16,7 @@
 from typing import Any, Mapping, Optional, Tuple
 
 import dataclasses
-from flax import nn
+from flax.linen import nn
 import gin
 import immutabledict
 
