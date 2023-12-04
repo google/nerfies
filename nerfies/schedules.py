@@ -15,6 +15,7 @@
 """Annealing Schedules."""
 import abc
 import collections
+from collections.abc import MutableMapping
 import copy
 import math
 from typing import Any, Iterable, List, Tuple, Union
