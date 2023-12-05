@@ -39,7 +39,7 @@ def from_config(schedule):
     return schedule
   if isinstance(schedule, Tuple) or isinstance(schedule, List):
     return from_tuple(schedule)
-  if isinstance(schedule, collections.abc.Mapping):
+  if isinstance(schedule, Mapping):
     return from_dict(schedule)
 
   raise ValueError(f'Unknown type {type(schedule)}.')
