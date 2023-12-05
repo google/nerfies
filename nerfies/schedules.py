@@ -15,6 +15,7 @@
 """Annealing Schedules."""
 import abc
 import collections
+from collections.abc import Mapping
 import copy
 import math
 from typing import Any, Iterable, List, Tuple, Union
@@ -38,7 +39,7 @@ def from_config(schedule):
     return schedule
   if isinstance(schedule, Tuple) or isinstance(schedule, List):
     return from_tuple(schedule)
-  if isinstance(schedule, collections.Mapping):
+  if isinstance(schedule, Mapping):
     return from_dict(schedule)
 
   raise ValueError(f'Unknown type {type(schedule)}.')

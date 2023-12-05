@@ -377,7 +377,7 @@ def strided_subset(sequence, count):
 
 def tree_collate(list_of_pytrees):
   """Collates a list of pytrees with the same structure."""
-  return tree_util.tree_multimap(lambda *x: np.stack(x), *list_of_pytrees)
+  return tree_util.tree_map(lambda *x: np.stack(x), *list_of_pytrees)
 
 
 @contextlib.contextmanager

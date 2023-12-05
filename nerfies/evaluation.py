@@ -92,7 +92,7 @@ def render_image(
     ret_map = jax_utils.unreplicate(model_out[ret_key])
     ret_map = jax.tree_map(lambda x: utils.unshard(x, padding), ret_map)
     ret_maps.append(ret_map)
-  ret_map = jax.tree_multimap(lambda *x: jnp.concatenate(x, axis=0), *ret_maps)
+  ret_map = jax.tree_map(lambda *x: jnp.concatenate(x, axis=0), *ret_maps)
   logging.info('Rendering took %.04s', time.time() - start_time)
   out = {}
   for key, value in ret_map.items():
